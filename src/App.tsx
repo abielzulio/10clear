@@ -110,7 +110,11 @@ function App() {
       return acc
     }, [] as Array<{ pageIndex: number; matches: Array<TextItem> }>)
 
-    setSearchResults(groupedResults)
+    const sortedResults = groupedResults.sort(
+      (a, b) => a.pageIndex - b.pageIndex
+    )
+
+    setSearchResults(sortedResults)
 
     // Update highlights for current page
     const currentPageResults = groupedResults.find(
