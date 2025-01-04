@@ -19,7 +19,7 @@ type APIElement = {
   level: number
   page: number
   value: string
-  bbox?: number[]
+  boundingBox?: BoundingBox
   children?: APIElement[]
 }
 
@@ -45,7 +45,7 @@ type SearchableItem = {
   id: string
   text: string
   pageIndex: number
-  bbox?: BoundingBox
+  boundingBox?: BoundingBox
 }
 
 function App() {
@@ -92,23 +92,11 @@ function App() {
 
       // Check if element has a value and is not empty
       if (element.value && element.value.trim()) {
-        // Convert bbox array to BoundingBox object
-        let bbox: BoundingBox | undefined = undefined
-        if (Array.isArray(element.bbox) && element.bbox.length === 4) {
-          const [x1, y1, x2, y2] = element.bbox
-          bbox = {
-            x: x1,
-            y: y1,
-            width: x2 - x1,
-            height: y2 - y1,
-          }
-        }
-
         items.push({
           id: element.id,
           text: element.value,
           pageIndex: element.page,
-          bbox: bbox,
+          boundingBox: element.boundingBox || undefined,
         })
       }
 
@@ -143,12 +131,12 @@ function App() {
   const calculateHighlights = React.useCallback(
     (matches: SearchableItem[]): Highlight[] => {
       return matches
-        .filter((match) => match.bbox)
+        .filter((match) => match.boundingBox)
         .map((match) => ({
-          left: match.bbox!.x,
-          top: match.bbox!.y,
-          width: match.bbox!.width,
-          height: match.bbox!.height,
+          left: match.boundingBox!.x,
+          top: match.boundingBox!.y,
+          width: match.boundingBox!.width,
+          height: match.boundingBox!.height,
           pageIndex: match.pageIndex,
         }))
     },
@@ -318,13 +306,13 @@ function App() {
       currentPage: pageNumber,
     }))
 
-    if (element.bbox) {
+    if (element.boundingBox) {
       setHighlights([
         {
-          left: element.bbox.x,
-          top: element.bbox.y,
-          width: element.bbox.width,
-          height: element.bbox.height,
+          left: element.boundingBox.x,
+          top: element.boundingBox.y,
+          width: element.boundingBox.width,
+          height: element.boundingBox.height,
           pageIndex: element.pageIndex,
         },
       ])
@@ -423,10 +411,10 @@ function App() {
                               className="mt-1 text-sm text-gray-600"
                             >
                               {match.text}
-                              {match.bbox && (
+                              {match.boundingBox && (
                                 <span className="ml-2 text-xs text-gray-500">
-                                  (at {Math.round(match.bbox.x)},{" "}
-                                  {Math.round(match.bbox.y)})
+                                  (at {Math.round(match.boundingBox.x)},{" "}
+                                  {Math.round(match.boundingBox.y)})
                                 </span>
                               )}
                             </div>
@@ -496,10 +484,10 @@ function App() {
                               : element.text}
                           </td>
                           <td className="px-4 py-2 text-sm text-gray-500">
-                            {element.bbox &&
-                              `(${Math.round(element.bbox.x)}, ${Math.round(
-                                element.bbox.y
-                              )})`}
+                            {element.boundingBox &&
+                              `(${Math.round(
+                                element.boundingBox.x
+                              )}, ${Math.round(element.boundingBox.y)})`}
                           </td>
                           <td className="px-4 py-2 text-sm">
                             <button
