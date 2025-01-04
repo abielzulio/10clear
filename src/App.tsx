@@ -1,13 +1,12 @@
-import React from "react"
-import "./index.css"
-import { pdfjs, Document, Page } from "react-pdf"
-import { TextItem } from "pdfjs-dist/types/src/display/api"
-import type { PDFDocumentProxy } from "pdfjs-dist"
 import lunr from "lunr"
+import type { PDFDocumentProxy } from "pdfjs-dist"
+import { TextItem } from "pdfjs-dist/types/src/display/api"
+import React from "react"
+import { Document, Page, pdfjs } from "react-pdf"
+import "./index.css"
 import type { Children, Root } from "./schema"
-import pdfWorkerSource from "pdfjs-dist/build/pdf.worker.min.mjs"
 
-pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSource
+pdfjs.GlobalWorkerOptions.workerSrc = "/pdf-worker.mjs"
 
 type Highlight = {
   left: number
