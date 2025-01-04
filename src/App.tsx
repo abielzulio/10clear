@@ -7,9 +7,7 @@ import lunr from "lunr"
 import type { Children, Root } from "./schema"
 import pdfWorkerSource from "pdfjs-dist/build/pdf.worker.min.mjs"
 
-pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(
-  new Blob([pdfWorkerSource], { type: "text/javascript" })
-)
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSource
 
 type Highlight = {
   left: number
@@ -34,7 +32,7 @@ type BBoxHighlight = {
 
 function App() {
   const [pdf, setPdf] = React.useState<File | null>(null)
-  const [scale, setScale] = React.useState(1.3)
+  const [scale] = React.useState(1.3)
   const [searchText, setSearchText] = React.useState("")
   const [searchResults, setSearchResults] = React.useState<
     Array<{
