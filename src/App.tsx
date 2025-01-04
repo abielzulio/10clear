@@ -5,8 +5,11 @@ import { TextItem } from "pdfjs-dist/types/src/display/api"
 import type { PDFDocumentProxy } from "pdfjs-dist"
 import lunr from "lunr"
 import type { Children, Root } from "./schema"
+import pdfWorkerSource from "pdfjs-dist/build/pdf.worker.min.mjs"
 
-pdfjs.GlobalWorkerOptions.workerSrc = `https://registry.npmmirror.com/pdfjs-dist/${pdfjs.version}/files/build/pdf.worker.min.mjs`
+pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(
+  new Blob([pdfWorkerSource], { type: "text/javascript" })
+)
 
 type Highlight = {
   left: number
