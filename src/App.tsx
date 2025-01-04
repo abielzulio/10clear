@@ -43,7 +43,9 @@ function App() {
     width: 0,
   })
 
-  const [highlights, setHighlights] = React.useState<Highlight[]>([])
+  const [highlights, setHighlights] = React.useState<
+    Record<number, Highlight[]>
+  >({})
   const pdfDocumentRef = React.useRef<PDFDocumentProxy | null>(null)
   const searchIndexRef = React.useRef<lunr.Index | null>(null)
   const searchItemsRef = React.useRef<SearchableItem[]>([])
@@ -93,24 +95,6 @@ function App() {
     []
   )
 
-  const updateHighlightsForPage = React.useCallback(
-    async (pageIndex: number) => {
-      if (!pdfDocumentRef.current) return
-
-      const pageResults = searchResults.find((r) => r.pageIndex === pageIndex)
-      if (pageResults) {
-        const page = await pdfDocumentRef.current.getPage(pageIndex)
-        const viewport = page.getViewport({ scale: 1.0 })
-        setHighlights(
-          calculateHighlights(pageResults.matches, viewport, searchText)
-        )
-      } else {
-        setHighlights([])
-      }
-    },
-    [searchText, searchResults, calculateHighlights]
-  )
-
   const handleZoomIn = React.useCallback(() => {
     setScale((prevScale) => Math.min(prevScale + 0.1, 2.0))
   }, [])
@@ -132,10 +116,6 @@ function App() {
       currentPage: Math.min(prev.currentPage + 1, prev.totalPages),
     }))
   }, [])
-
-  React.useEffect(() => {
-    updateHighlightsForPage(metadata.currentPage)
-  }, [metadata.currentPage, updateHighlightsForPage])
 
   const memoizedSearchResults = React.useMemo(() => {
     if (!searchIndexRef.current || !searchText || !searchItemsRef.current)
@@ -175,18 +155,32 @@ function App() {
   const handleSearch = React.useCallback(() => {
     if (!searchText) {
       setSearchResults([])
-      setHighlights([])
+      setHighlights({})
       return
     }
 
     setSearchResults(memoizedSearchResults)
-    updateHighlightsForPage(metadata.currentPage)
-  }, [
-    searchText,
-    metadata.currentPage,
-    memoizedSearchResults,
-    updateHighlightsForPage,
-  ])
+
+    const calculateAllHighlights = async () => {
+      if (!pdfDocumentRef.current) return
+
+      const allHighlights: Record<number, Highlight[]> = {}
+
+      for (const result of memoizedSearchResults) {
+        const page = await pdfDocumentRef.current.getPage(result.pageIndex)
+        const viewport = page.getViewport({ scale: 1.0 })
+        allHighlights[result.pageIndex] = calculateHighlights(
+          result.matches,
+          viewport,
+          searchText
+        )
+      }
+
+      setHighlights(allHighlights)
+    }
+
+    calculateAllHighlights()
+  }, [searchText, memoizedSearchResults, calculateHighlights])
 
   const goToSearchResult = (pageIndex: number) => {
     setMetadata((prev) => ({
@@ -271,7 +265,8 @@ function App() {
                         onClick={() => goToSearchResult(result.pageIndex)}
                         className="block w-full px-4 py-2 text-left rounded hover:bg-gray-100"
                       >
-                        Page {result.pageIndex}: {result.matches.length} matches
+                        Page {result.pageIndex}:{" "}
+                        {result.matches.flatMap((match) => match.str)} matches
                       </button>
                     ))}
                   </div>
@@ -346,7 +341,7 @@ function App() {
                     renderTextLayer={true}
                   />
                   {/* Highlight overlays */}
-                  {highlights.map((highlight, index) => (
+                  {highlights[metadata.currentPage]?.map((highlight, index) => (
                     <div
                       key={index}
                       className="absolute bg-yellow-200 opacity-50 pointer-events-none"
