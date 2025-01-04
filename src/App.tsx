@@ -4,6 +4,7 @@ import { pdfjs, Document, Page } from "react-pdf"
 import { TextItem } from "pdfjs-dist/types/src/display/api"
 import type { PDFDocumentProxy } from "pdfjs-dist"
 import lunr from "lunr"
+import type { Children, Root } from "./schema"
 
 pdfjs.GlobalWorkerOptions.workerSrc = `https://registry.npmmirror.com/pdfjs-dist/${pdfjs.version}/files/build/pdf.worker.min.mjs`
 
@@ -19,6 +20,13 @@ type SearchableItem = {
   item: TextItem
   text: string
   id: string
+}
+
+type BBoxHighlight = {
+  id: string
+  page: number
+  bbox: number[] // [left, bottom, right, top]
+  value: string
 }
 
 function App() {
@@ -49,6 +57,11 @@ function App() {
   const pdfDocumentRef = React.useRef<PDFDocumentProxy | null>(null)
   const searchIndexRef = React.useRef<lunr.Index | null>(null)
   const searchItemsRef = React.useRef<SearchableItem[]>([])
+  const [bboxHighlights, setBboxHighlights] = React.useState<BBoxHighlight[]>(
+    []
+  )
+  const [jsonInput, setJsonInput] = React.useState("")
+  const [jsonHighlightSearch, setJsonHighlightSearch] = React.useState("")
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     try {
@@ -221,6 +234,51 @@ function App() {
     })
   }
 
+  const parseJsonToHighlights = async (
+    nodes: Children[]
+  ): Promise<BBoxHighlight[]> => {
+    const highlights: BBoxHighlight[] = []
+
+    if (!pdfDocumentRef.current) return highlights
+
+    const traverse = async (node: Children) => {
+      if (node.bbox && node.value && node.page) {
+        const page = await pdfDocumentRef.current!.getPage(node.page)
+        const viewport = page.getViewport({ scale: 1.0 })
+
+        // PDF coordinates start from bottom-left, we need to convert to top-left
+        const [x1, y1, x2, y2] = node.bbox
+        highlights.push({
+          id: node.id,
+          page: node.page,
+          bbox: [
+            x1, // left
+            viewport.height - y2, // top (convert from bottom)
+            x2, // right
+            viewport.height - y1, // bottom (convert from top)
+          ],
+          value: node.value,
+        })
+      }
+
+      if (node.children && Array.isArray(node.children)) {
+        for (const child of node.children) {
+          await traverse(child)
+        }
+      }
+    }
+
+    for (const node of nodes) {
+      await traverse(node)
+    }
+    return highlights
+  }
+
+  const handleJsonData = async (jsonData: Root) => {
+    const highlights = await parseJsonToHighlights(jsonData.result)
+    setBboxHighlights(highlights)
+  }
+
   return (
     <main className="min-h-screen bg-gray-100">
       <div className="container p-4 mx-auto">
@@ -353,7 +411,89 @@ function App() {
                       }}
                     />
                   ))}
+                  {bboxHighlights
+                    .filter(
+                      (highlight) => highlight.page === metadata.currentPage
+                    )
+                    .map((highlight) => (
+                      <div
+                        key={highlight.id}
+                        className="absolute border-2 pointer-events-none bg-blue-500/10"
+                        style={{
+                          left: highlight.bbox[0] * scale,
+                          top: highlight.bbox[1] * scale,
+                          width:
+                            (highlight.bbox[2] - highlight.bbox[0]) * scale,
+                          height:
+                            (highlight.bbox[3] - highlight.bbox[1]) * scale,
+                        }}
+                      />
+                    ))}
                 </Document>
+              </div>
+            </div>
+
+            {bboxHighlights.length > 0 && (
+              <div className="p-4 mt-4 bg-white rounded-lg shadow">
+                <h3 className="mb-2 font-semibold">JSON Highlights:</h3>
+                <input
+                  type="text"
+                  value={jsonHighlightSearch}
+                  onChange={(e) => setJsonHighlightSearch(e.target.value)}
+                  placeholder="Search highlights..."
+                  className="w-full px-4 py-2 mb-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <div className="overflow-auto max-h-40">
+                  {bboxHighlights
+                    .sort((a, b) => a.page - b.page)
+                    .filter((highlight) =>
+                      highlight.value
+                        .toLowerCase()
+                        .includes(jsonHighlightSearch.toLowerCase())
+                    )
+                    .map((highlight) => (
+                      <button
+                        key={highlight.id}
+                        onClick={() =>
+                          setMetadata((prev) => ({
+                            ...prev,
+                            currentPage: highlight.page,
+                          }))
+                        }
+                        className="block w-full px-4 py-2 text-left rounded hover:bg-gray-100"
+                      >
+                        <span className="font-medium">
+                          Page {highlight.page}:
+                        </span>{" "}
+                        {highlight.value}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {/* Add this after the search controls section and before the PDF controls */}
+            <div className="p-4 mt-4 bg-white rounded-lg shadow">
+              <div className="flex items-center gap-4">
+                <textarea
+                  value={jsonInput}
+                  onChange={(e) => setJsonInput(e.target.value)}
+                  placeholder="Paste JSON here..."
+                  className="flex-1 p-2 border rounded-lg min-h-[100px]"
+                />
+                <button
+                  onClick={async () => {
+                    try {
+                      const jsonData = JSON.parse(jsonInput) as Root
+                      await handleJsonData(jsonData)
+                    } catch (error) {
+                      console.error("Invalid JSON:", error)
+                    }
+                  }}
+                  className="px-4 py-2 text-white bg-blue-500 rounded-lg hover:bg-blue-600"
+                >
+                  Parse JSON
+                </button>
               </div>
             </div>
           </>
