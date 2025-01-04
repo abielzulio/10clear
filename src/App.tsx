@@ -7,7 +7,6 @@ import Fuse from "fuse.js"
 
 pdfjs.GlobalWorkerOptions.workerSrc = `https://registry.npmmirror.com/pdfjs-dist/${pdfjs.version}/files/build/pdf.worker.min.mjs`
 
-// Add this type for highlight positions
 type Highlight = {
   left: number
   top: number
@@ -24,7 +23,8 @@ type SearchableItem = {
 function App() {
   const [pdf, setPdf] = React.useState<File | null>(null)
   const [scale, setScale] = React.useState(1.0)
-  const [searchText, setSearchText] = React.useState("")
+  const [_searchText, setSearchText] = React.useState("")
+  const searchText = React.useDeferredValue(_searchText)
   const [searchResults, setSearchResults] = React.useState<
     Array<{
       pageIndex: number
@@ -42,39 +42,65 @@ function App() {
     height: 0,
     width: 0,
   })
-  // Add state for highlights
+
   const [highlights, setHighlights] = React.useState<Highlight[]>([])
   const pdfDocumentRef = React.useRef<PDFDocumentProxy | null>(null)
   const fuseIndexRef = React.useRef<Fuse<SearchableItem> | null>(null)
+  const [, setIsLoading] = React.useState(false)
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      setPdf(e.target.files[0])
-      const doc = await pdfjs.getDocument(
-        URL.createObjectURL(e.target.files[0])
-      ).promise
-      pdfDocumentRef.current = doc
-      await buildSearchIndex(doc)
+    try {
+      setIsLoading(true)
+      if (e.target.files) {
+        setPdf(e.target.files[0])
+        const doc = await pdfjs.getDocument(
+          URL.createObjectURL(e.target.files[0])
+        ).promise
+        pdfDocumentRef.current = doc
+        await buildSearchIndex(doc)
+      }
+    } catch (error) {
+      console.error("Error loading PDF:", error)
+    } finally {
+      setIsLoading(false)
     }
   }
 
-  const handleZoomIn = () => {
+  const updateHighlightsForPage = React.useCallback(
+    async (pageIndex: number) => {
+      if (!pdfDocumentRef.current) return
+
+      const pageResults = searchResults.find((r) => r.pageIndex === pageIndex)
+      if (pageResults) {
+        const page = await pdfDocumentRef.current.getPage(pageIndex)
+        const viewport = page.getViewport({ scale: 1.0 })
+        setHighlights(
+          calculateHighlights(pageResults.matches, viewport, searchText)
+        )
+      } else {
+        setHighlights([])
+      }
+    },
+    [searchText, searchResults, pdfDocumentRef]
+  )
+
+  const handleZoomIn = React.useCallback(() => {
     setScale((prevScale) => Math.min(prevScale + 0.1, 2.0))
-  }
+  }, [])
 
-  const handleZoomOut = () => {
+  const handleZoomOut = React.useCallback(() => {
     setScale((prevScale) => Math.max(prevScale - 0.1, 0.5))
-  }
+  }, [])
 
-  const handlePrevPage = async () => {
+  const handlePrevPage = React.useCallback(async () => {
     setMetadata((prev) => ({
       ...prev,
       currentPage: Math.max(prev.currentPage - 1, 1),
     }))
     await updateHighlightsForPage(Math.max(metadata.currentPage - 1, 1))
-  }
+  }, [updateHighlightsForPage, metadata.currentPage])
 
-  const handleNextPage = async () => {
+  const handleNextPage = React.useCallback(async () => {
     setMetadata((prev) => {
       const newPage = Math.min(prev.currentPage + 1, prev.totalPages)
       updateHighlightsForPage(newPage)
@@ -83,24 +109,18 @@ function App() {
         currentPage: newPage,
       }
     })
-  }
+  }, [updateHighlightsForPage])
 
-  const handleSearch = () => {
-    if (!fuseIndexRef.current || !searchText) {
-      setSearchResults([])
-      setHighlights([])
-      return
-    }
+  const memoizedSearchResults = React.useMemo(() => {
+    if (!fuseIndexRef.current || !searchText) return []
 
     const searchResults = fuseIndexRef.current.search(searchText)
-
-    // Filter for exact word matches if in exact mode
     const filteredResults = searchResults.filter(({ item }) => {
-      const regex = new RegExp(`\\b${searchText}\\b`, "i") // Case-insensitive exact word match
+      const regex = new RegExp(`\\b${searchText}\\b`, "i")
       return regex.test(item.item.str)
     })
 
-    const groupedResults = filteredResults.reduce((acc, { item }) => {
+    return filteredResults.reduce((acc, { item }) => {
       const pageGroup = acc.find((g) => g.pageIndex === item.pageIndex)
       if (pageGroup) {
         pageGroup.matches.push(item.item)
@@ -109,15 +129,21 @@ function App() {
       }
       return acc
     }, [] as Array<{ pageIndex: number; matches: Array<TextItem> }>)
+  }, [searchText])
 
-    const sortedResults = groupedResults.sort(
+  const handleSearch = React.useCallback(() => {
+    if (!searchText) {
+      setSearchResults([])
+      setHighlights([])
+      return
+    }
+
+    const sortedResults = memoizedSearchResults.sort(
       (a, b) => a.pageIndex - b.pageIndex
     )
-
     setSearchResults(sortedResults)
 
-    // Update highlights for current page
-    const currentPageResults = groupedResults.find(
+    const currentPageResults = sortedResults.find(
       (r) => r.pageIndex === metadata.currentPage
     )
     if (currentPageResults) {
@@ -125,7 +151,12 @@ function App() {
     } else {
       setHighlights([])
     }
-  }
+  }, [
+    searchText,
+    metadata.currentPage,
+    memoizedSearchResults,
+    updateHighlightsForPage,
+  ])
 
   const goToSearchResult = async (pageIndex: number) => {
     setMetadata((prev) => ({
@@ -166,39 +197,30 @@ function App() {
     }
   }
 
-  // New helper function to update highlights for a specific page
-  const updateHighlightsForPage = async (pageIndex: number) => {
-    if (!pdfDocumentRef.current) return
+  const calculateHighlights = (
+    matches: TextItem[],
+    viewport: any,
+    searchText: string
+  ): Highlight[] => {
+    const highlights: Highlight[] = []
+    matches.forEach((match) => {
+      const transform = match.transform || [1, 0, 0, 1, 0, 0]
+      const text = match.str
+      const regex = new RegExp(`\\b${searchText}\\b`, "i")
+      const match_result = text.match(regex)
 
-    const pageResults = searchResults.find((r) => r.pageIndex === pageIndex)
-    if (pageResults) {
-      const page = await pdfDocumentRef.current.getPage(pageIndex)
-      const viewport = page.getViewport({ scale: 1.0 })
-
-      const highlights: Highlight[] = []
-      pageResults.matches.forEach((match) => {
-        const transform = match.transform || [1, 0, 0, 1, 0, 0]
-        const text = match.str
-        const regex = new RegExp(`\\b${searchText}\\b`, "i")
-        const match_result = text.match(regex)
-
-        if (match_result) {
-          const start = match_result.index || 0
-          const charWidth = (match.width || 0) / text.length
-
-          highlights.push({
-            left: transform[4] + start * charWidth,
-            top: viewport.height - transform[5] - 10,
-            width: searchText.length * charWidth,
-            height: match.height || 0,
-          })
-        }
-      })
-
-      setHighlights(highlights)
-    } else {
-      setHighlights([])
-    }
+      if (match_result) {
+        const start = match_result.index || 0
+        const charWidth = (match.width || 0) / text.length
+        highlights.push({
+          left: transform[4] + start * charWidth,
+          top: viewport.height - transform[5] - 10,
+          width: searchText.length * charWidth,
+          height: match.height || 0,
+        })
+      }
+    })
+    return highlights
   }
 
   // Add this function to build the search index
