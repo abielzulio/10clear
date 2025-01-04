@@ -3,6 +3,7 @@ import "./index.css"
 import { pdfjs, Document, Page } from "react-pdf"
 import { TextItem } from "pdfjs-dist/types/src/display/api"
 import type { PDFDocumentProxy } from "pdfjs-dist"
+import Fuse from "fuse.js"
 
 pdfjs.GlobalWorkerOptions.workerSrc = `https://registry.npmmirror.com/pdfjs-dist/${pdfjs.version}/files/build/pdf.worker.min.mjs`
 
@@ -12,6 +13,12 @@ type Highlight = {
   top: number
   width: number
   height: number
+}
+
+type SearchableItem = {
+  pageIndex: number
+  item: TextItem
+  words: string[]
 }
 
 function App() {
@@ -38,11 +45,16 @@ function App() {
   // Add state for highlights
   const [highlights, setHighlights] = React.useState<Highlight[]>([])
   const pdfDocumentRef = React.useRef<PDFDocumentProxy | null>(null)
+  const fuseIndexRef = React.useRef<Fuse<SearchableItem> | null>(null)
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       setPdf(e.target.files[0])
-      pdfDocumentRef.current = null // Reset the ref when new file is selected
+      const doc = await pdfjs.getDocument(
+        URL.createObjectURL(e.target.files[0])
+      ).promise
+      pdfDocumentRef.current = doc
+      await buildSearchIndex(doc)
     }
   }
 
@@ -73,55 +85,42 @@ function App() {
     })
   }
 
-  const handleSearch = async () => {
-    if (!pdf || !searchText) {
+  const handleSearch = () => {
+    if (!fuseIndexRef.current || !searchText) {
       setSearchResults([])
       setHighlights([])
       return
     }
 
-    const doc = await pdfjs.getDocument(URL.createObjectURL(pdf)).promise
-    pdfDocumentRef.current = doc // Update ref instead of state
-    const results: typeof searchResults = []
+    const searchResults = fuseIndexRef.current.search(searchText)
 
-    for (let pageIndex = 1; pageIndex <= doc.numPages; pageIndex++) {
-      const page = await doc.getPage(pageIndex)
-      const textContent = await page.getTextContent()
-      const viewport = page.getViewport({ scale: 1.0 })
+    // Filter for exact word matches if in exact mode
+    const filteredResults = searchResults.filter(({ item }) => {
+      const regex = new RegExp(`\\b${searchText}\\b`, "i") // Case-insensitive exact word match
+      return regex.test(item.item.str)
+    })
 
-      const textItems = textContent.items.filter(
-        (item): item is TextItem => "str" in item
-      )
-
-      const pageText = textItems
-        .map((item) => item.str)
-        .join(" ")
-        .toLowerCase()
-
-      if (pageText.includes(searchText.toLowerCase())) {
-        const matches = textItems.filter((item) =>
-          item.str.toLowerCase().includes(searchText.toLowerCase())
-        )
-        results.push({ pageIndex, matches })
-
-        // Update highlights when viewing matching page
-        if (pageIndex === metadata.currentPage) {
-          setHighlights(
-            matches.map((match) => {
-              const transform = match.transform || [1, 0, 0, 1, 0, 0]
-              return {
-                left: transform[4],
-                top: viewport.height - transform[5] - 10,
-                width: match.width || 0,
-                height: match.height || 0,
-              }
-            })
-          )
-        }
+    const groupedResults = filteredResults.reduce((acc, { item }) => {
+      const pageGroup = acc.find((g) => g.pageIndex === item.pageIndex)
+      if (pageGroup) {
+        pageGroup.matches.push(item.item)
+      } else {
+        acc.push({ pageIndex: item.pageIndex, matches: [item.item] })
       }
-    }
+      return acc
+    }, [] as Array<{ pageIndex: number; matches: Array<TextItem> }>)
 
-    setSearchResults(results)
+    setSearchResults(groupedResults)
+
+    // Update highlights for current page
+    const currentPageResults = groupedResults.find(
+      (r) => r.pageIndex === metadata.currentPage
+    )
+    if (currentPageResults) {
+      updateHighlightsForPage(metadata.currentPage)
+    } else {
+      setHighlights([])
+    }
   }
 
   const goToSearchResult = async (pageIndex: number) => {
@@ -136,17 +135,30 @@ function App() {
     if (pageResults) {
       const page = await pdfDocumentRef.current.getPage(pageIndex)
       const viewport = page.getViewport({ scale: 1.0 })
-      setHighlights(
-        pageResults.matches.map((match) => {
-          const transform = match.transform || [1, 0, 0, 1, 0, 0]
-          return {
-            left: transform[4],
+
+      const highlights: Highlight[] = []
+      pageResults.matches.forEach((match) => {
+        const transform = match.transform || [1, 0, 0, 1, 0, 0]
+        const text = match.str
+        const regex = new RegExp(`\\b${searchText}\\b`, "i")
+        const match_result = text.match(regex)
+
+        if (match_result) {
+          const start = match_result.index || 0
+          const charWidth = (match.width || 0) / text.length
+
+          highlights.push({
+            left: transform[4] + start * charWidth,
             top: viewport.height - transform[5] - 10,
-            width: match.width || 0,
+            width: searchText.length * charWidth,
             height: match.height || 0,
-          }
-        })
-      )
+          })
+        }
+      })
+
+      setHighlights(highlights)
+    } else {
+      setHighlights([])
     }
   }
 
@@ -158,20 +170,61 @@ function App() {
     if (pageResults) {
       const page = await pdfDocumentRef.current.getPage(pageIndex)
       const viewport = page.getViewport({ scale: 1.0 })
-      setHighlights(
-        pageResults.matches.map((match) => {
-          const transform = match.transform || [1, 0, 0, 1, 0, 0]
-          return {
-            left: transform[4],
+
+      const highlights: Highlight[] = []
+      pageResults.matches.forEach((match) => {
+        const transform = match.transform || [1, 0, 0, 1, 0, 0]
+        const text = match.str
+        const regex = new RegExp(`\\b${searchText}\\b`, "i")
+        const match_result = text.match(regex)
+
+        if (match_result) {
+          const start = match_result.index || 0
+          const charWidth = (match.width || 0) / text.length
+
+          highlights.push({
+            left: transform[4] + start * charWidth,
             top: viewport.height - transform[5] - 10,
-            width: match.width || 0,
+            width: searchText.length * charWidth,
             height: match.height || 0,
-          }
-        })
-      )
+          })
+        }
+      })
+
+      setHighlights(highlights)
     } else {
-      setHighlights([]) // Clear highlights if no results on this page
+      setHighlights([])
     }
+  }
+
+  // Add this function to build the search index
+  const buildSearchIndex = async (doc: PDFDocumentProxy) => {
+    const searchableItems: SearchableItem[] = []
+
+    for (let pageIndex = 1; pageIndex <= doc.numPages; pageIndex++) {
+      const page = await doc.getPage(pageIndex)
+      const textContent = await page.getTextContent()
+
+      const textItems = textContent.items.filter(
+        (item): item is TextItem => "str" in item
+      )
+
+      textItems.forEach((item) => {
+        searchableItems.push({
+          pageIndex,
+          item,
+          words: item.str.split(/[\s,.;:!?()[\]{}'"]+/).filter(Boolean),
+        })
+      })
+    }
+
+    fuseIndexRef.current = new Fuse(searchableItems, {
+      keys: ["item.str"],
+      includeScore: true,
+      threshold: 0,
+      ignoreLocation: true,
+      useExtendedSearch: false,
+    })
   }
 
   return (
