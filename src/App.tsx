@@ -111,7 +111,7 @@ function App() {
               const transform = match.transform || [1, 0, 0, 1, 0, 0]
               return {
                 left: transform[4],
-                top: viewport.height - transform[5],
+                top: viewport.height - transform[5] - 10,
                 width: match.width || 0,
                 height: match.height || 0,
               }
@@ -141,7 +141,7 @@ function App() {
           const transform = match.transform || [1, 0, 0, 1, 0, 0]
           return {
             left: transform[4],
-            top: viewport.height - transform[5],
+            top: viewport.height - transform[5] - 10,
             width: match.width || 0,
             height: match.height || 0,
           }
@@ -163,7 +163,7 @@ function App() {
           const transform = match.transform || [1, 0, 0, 1, 0, 0]
           return {
             left: transform[4],
-            top: viewport.height - transform[5],
+            top: viewport.height - transform[5] - 10,
             width: match.width || 0,
             height: match.height || 0,
           }
