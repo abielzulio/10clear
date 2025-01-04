@@ -31,7 +31,7 @@ type BBoxHighlight = {
 
 function App() {
   const [pdf, setPdf] = React.useState<File | null>(null)
-  const [scale] = React.useState(1.3)
+  const [scale] = React.useState(1.1)
   const [searchText, setSearchText] = React.useState("")
   const [searchResults, setSearchResults] = React.useState<
     Array<{
